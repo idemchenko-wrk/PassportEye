@@ -40,7 +40,7 @@ def ocr(img, mrz_mode=True, extra_cmdline_params=''):
         imwrite(input_file_name, img)
 
         if mrz_mode:
-			# NB: Tesseract 4.0 does not seem to support tessedit_char_whitelist
+            # NB: Tesseract 4.0 does not seem to support tessedit_char_whitelist
             config = ("--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789><"
                       " -c load_system_dawg=F -c load_freq_dawg=F {}").format(extra_cmdline_params)
         else:
