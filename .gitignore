@@ -9,3 +9,4 @@
 /venv*
 /_tmp
 Thumbs.db
+.idea/
