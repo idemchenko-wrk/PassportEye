@@ -118,7 +118,8 @@ class RotatedBox(object):
 
     def extract_from_image(self, img, scale=1.0, margin_width=5, margin_height=5):
         """Extracts the contents of this box from a given image.
-        For that the image is "unrotated" by the appropriate angle, and the corresponding part is extracted from it.
+        Fot that upper left corner of the box moved to the origin, rotation is corrected and the corresponding part is extracted.
+        It should be fairly efficient since AFAIK warp() does calculations ony for the pixels that will be present in the output_shape.
 
         Returns an image with dimensions height*scale x width*scale.
         Note that the box coordinates are interpreted as "image coordinates" (i.e. x is row and y is column),
@@ -133,57 +134,32 @@ class RotatedBox(object):
             This value is given wrt actual box dimensions (i.e. not scaled).
         :param margin_height: The margin that should be added to the height dimension of the box from each side.
         :return: a numpy ndarray, corresponding to the extracted region (aligned straight).
-
-        TODO: This could be made more efficient if we avoid rotating the full image and cut out the ROI from it beforehand.
         """
-        rotate_by = (np.pi/2 - self.angle)*180/np.pi
-        img_rotated = transform.rotate(img, angle=rotate_by, center=[self.center[1]*scale, self.center[0]*scale], resize=True)
-        # The resizeable transform will shift the resulting image somewhat wrt original coordinates.
-        # When we cut out the box we will compensate for this shift.
-        shift_c, shift_r = self._compensate_rotation_shift(img, scale)
 
-        r1 = max(int((self.center[0] - self.height/2 - margin_height)*scale - shift_r), 0)
-        r2 = int((self.center[0] + self.height/2 + margin_height)*scale - shift_r)
-        c1 = max(int((self.center[1] - self.width/2 - margin_width)*scale - shift_c), 0)
-        c2 = int((self.center[1] + self.width/2 + margin_width)*scale - shift_c)
-        return img_rotated[r1:r2, c1:c2]
+        # rotation angle within (-pi/2, pi/2) range
+        rotate_by = np.pi / 2 - (self.angle + np.pi) % np.pi
 
-    def _compensate_rotation_shift(self, img, scale):
-        """This is an auxiliary method used by extract_from_image.
-        It is needed due to particular specifics of the skimage.transform.rotate implementation.
-        Namely, when you use rotate(... , resize=True), the rotated image is rotated and shifted by certain amount.
-        Thus when we need to cut out the box from the image, we need to account for this shift.
-        We do this by repeating the computation from skimage.transform.rotate here.
+        v_hor = (self.width / 2 + margin_width) * np.array([np.cos(self.angle), np.sin(self.angle)])
+        v_vert = (self.height / 2 + margin_height) * np.array([-np.sin(self.angle), np.cos(self.angle)])
+        upper_left_corner_displacement = (v_hor - v_vert) * (np.sign(self.angle) or 1)
+        upper_left_corner = (self.center - upper_left_corner_displacement) * scale
 
-        TODO: This makes the code uncomfortably coupled to SKImage (e.g. this logic is appropriate for skimage 0.12.1, but not for 0.11,
-        and no one knows what happens in later versions). A solution would be to use skimage.transform.warp with custom settings, but we can think of it later.
-        """
-        ctr = np.asarray([self.center[1]*scale, self.center[0]*scale])
-        tform1 = transform.SimilarityTransform(translation=ctr)
-        tform2 = transform.SimilarityTransform(rotation=np.pi/2 - self.angle)
-        tform3 = transform.SimilarityTransform(translation=-ctr)
-        tform = tform3 + tform2 + tform1
+        tform = (
+            transform.SimilarityTransform(rotation=rotate_by)
+            # switch x and y for skimage.transform.warp function
+            + transform.SimilarityTransform(translation=upper_left_corner[::-1])
+        )
 
-        rows, cols = img.shape[0], img.shape[1]
-        corners = np.array([
-            [0, 0],
-            [0, rows - 1],
-            [cols - 1, rows - 1],
-            [cols - 1, 0]
+        # Make sure the transform is exactly affine, to ensure fast warping.
+        tform.params[2] = (0, 0, 1)
+
+        shape = np.asarray([
+            self.height + margin_height * 2,
+            self.width + margin_width * 2
         ])
-        corners = tform.inverse(corners)
-        minc = corners[:, 0].min()
-        minr = corners[:, 1].min()
-        maxc = corners[:, 0].max()
-        maxr = corners[:, 1].max()
-
-        # SKImage 0.11 version
-        out_rows = maxr - minr + 1
-        out_cols = maxc - minc + 1
-
-        # fit output image in new shape
-        return ((cols - out_cols) / 2., (rows - out_rows) / 2.)
-
+        # scaling is performed after adding margins as per previous implementation
+        output_shape = np.ceil(shape * scale)
+        return transform.warp(img, tform, output_shape=output_shape)
 
     @staticmethod
     def from_points(points, box_type='bb'):
