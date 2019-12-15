@@ -9,7 +9,6 @@ import io
 import numpy as np
 from skimage import transform, morphology, filters, measure
 from skimage import io as skimage_io # So as not to clash with builtin io
-from ..util.pdf import extract_first_jpeg_in_pdf
 from ..util.pipeline import Pipeline
 from ..util.geometry import RotatedBox
 from ..util.ocr import ocr
@@ -22,10 +21,9 @@ class Loader(object):
     __depends__ = []
     __provides__ = ['img']
 
-    def __init__(self, file, as_gray=True, pdf_aware=True):
+    def __init__(self, file, as_gray=True):
         self.file = file
         self.as_gray = as_gray
-        self.pdf_aware = pdf_aware
 
     def _imread(self, file):
         """Proxy to skimage.io.imread with some fixes."""
@@ -42,14 +40,7 @@ class Loader(object):
 
     def __call__(self):
         if isinstance(self.file, str):
-            if self.pdf_aware and self.file.lower().endswith('.pdf'):
-                with open(self.file, 'rb') as f:
-                    img_data = extract_first_jpeg_in_pdf(f)
-                if img_data is None:
-                    return None
-                return self._imread(img_data)
-            else:
-                return self._imread(self.file)
+            return self._imread(self.file)
         elif isinstance(self.file, (bytes, io.IOBase)):
             return self._imread(self.file)
         return None
